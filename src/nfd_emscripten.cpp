@@ -104,11 +104,8 @@ nfdresult_t Pick(int mode,
 #if defined(NFD_EMSCRIPTEN_ASYNCIFY) || defined(NFD_EMSCRIPTEN_JSPI)
     const std::string accept = BuildAccept(filters, filterCount);
     JSResult result{};
-    const int status = NFDi_PickJS(mode,
-                                   multiple ? 1 : 0,
-                                   accept.c_str(),
-                                   suggestedName ? suggestedName : "",
-                                   &result);
+    const int status = NFDi_PickJS(
+        mode, multiple ? 1 : 0, accept.c_str(), suggestedName ? suggestedName : "", &result);
     if (status < 0) {
         char* jsError = NFDi_GetLastError();
         SetError(jsError ? jsError : "The browser file dialog failed.");
@@ -194,147 +191,179 @@ nfdresult_t MultiplePaths(int mode,
 }  // namespace
 
 #if defined(NFD_EMSCRIPTEN_ASYNCIFY) || defined(NFD_EMSCRIPTEN_JSPI)
-EM_ASYNC_JS(int, NFDi_PickJS,
-            (int mode, int multiple, const char* acceptPtr, const char* suggestedNamePtr, JSResult* out),
-            {
-                const accept = UTF8ToString(acceptPtr);
-                const suggestedName = UTF8ToString(suggestedNamePtr);
-                Module.nfdLastError = "";
-                const writeResult = (paths) => {
-                    let arrayPtr = 0;
-                    if (paths.length) {
-                        arrayPtr = _malloc(paths.length * 4);
-                        if (!arrayPtr) throw new Error("Could not allocate browser dialog results.");
-                        HEAPU32[out >> 2] = arrayPtr;
-                        HEAP32[(out + 4) >> 2] = 0;
-                        for (let i = 0; i < paths.length; ++i) {
-                            const pathPtr = stringToNewUTF8(paths[i]);
-                            if (!pathPtr) throw new Error("Could not allocate a selected path.");
-                            HEAPU32[(arrayPtr >> 2) + i] = pathPtr;
-                            HEAP32[(out + 4) >> 2] = i + 1;
-                        }
+EM_ASYNC_JS(
+    int,
+    NFDi_PickJS,
+    (int mode, int multiple, const char* acceptPtr, const char* suggestedNamePtr, JSResult* out),
+    {
+        const accept = UTF8ToString(acceptPtr);
+        const suggestedName = UTF8ToString(suggestedNamePtr);
+        Module.nfdLastError = "";
+        const writeResult = (paths) => {
+            let arrayPtr = 0;
+            if (paths.length) {
+                arrayPtr = _malloc(paths.length * 4);
+                if (!arrayPtr) throw new Error("Could not allocate browser dialog results.");
+                HEAPU32[out >> 2] = arrayPtr;
+                HEAP32[(out + 4) >> 2] = 0;
+                for (let i = 0; i < paths.length; ++i) {
+                    const pathPtr = stringToNewUTF8(paths[i]);
+                    if (!pathPtr) throw new Error("Could not allocate a selected path.");
+                    HEAPU32[(arrayPtr >> 2) + i] = pathPtr;
+                    HEAP32[(out + 4) >> 2] = i + 1;
+                }
+            }
+            HEAPU32[out >> 2] = arrayPtr;
+            HEAP32[(out + 4) >> 2] = paths.length;
+        };
+        const nextId = () => {
+            Module.nfdSelectionId = (Module.nfdSelectionId || 0) + 1;
+            return Module.nfdSelectionId;
+        };
+        const ensureDirectory = (path) => {
+            if (!FS.analyzePath(path).exists) FS.mkdirTree(path);
+        };
+        const safeParts = (name) = > name.replace(/\\\\\\\\/ g, "/")
+                                         .split("/")
+                                         .filter((part) = > part&& part != = "." && part != = "..");
+        const writeBrowserFile = async(file, path) => {
+            const slash = path.lastIndexOf("/");
+            ensureDirectory(path.slice(0, slash));
+            FS.writeFile(path, new Uint8Array(await file.arrayBuffer()));
+        };
+        const inputFiles = () =
+            > new Promise((resolve) = > {
+                  const input = document.createElement("input");
+                  input.type = "file";
+                  input.multiple = mode == = 0 && multiple != = 0;
+                  if (mode == = 1) input.setAttribute("webkitdirectory", "");
+                  if (accept) input.accept = accept;
+                  input.style.cssText = "position:fixed;left:-10000px;top:0";
+                  document.body.appendChild(input);
+                  let done = false;
+                  const finish = (files) => {
+                      if (done) return;
+                      done = true;
+                      input.remove();
+                      resolve(files);
+                  };
+                  input.addEventListener(
+                      "change", () = > finish(Array.from(input.files || [])), {once : true});
+                  input.addEventListener("cancel", () = > finish(null), {once : true});
+                  input.click();
+              });
+        try {
+            if (mode == = 2) {
+                let handle = null;
+                const name = safeParts(suggestedName).pop() || "untitled";
+                if (typeof window.showSaveFilePicker == = "function") {
+                    const extensions = accept.split(",").filter(Boolean);
+                    const options = {suggestedName : name};
+                    if (extensions.length) {
+                        options.types = [ {
+                            description : "Allowed files",
+                            accept : {"application/octet-stream" : extensions}
+                        } ];
                     }
-                    HEAPU32[out >> 2] = arrayPtr;
-                    HEAP32[(out + 4) >> 2] = paths.length;
-                };
-                const nextId = () => {
-                    Module.nfdSelectionId = (Module.nfdSelectionId || 0) + 1;
-                    return Module.nfdSelectionId;
-                };
-                const ensureDirectory = (path) => {
-                    if (!FS.analyzePath(path).exists) FS.mkdirTree(path);
-                };
-                const safeParts = (name) => name.replace(/\\\\\\\\/g, "/").split("/")
-                    .filter((part) => part && part !== "." && part !== "..");
-                const writeBrowserFile = async (file, path) => {
-                    const slash = path.lastIndexOf("/");
-                    ensureDirectory(path.slice(0, slash));
-                    FS.writeFile(path, new Uint8Array(await file.arrayBuffer()));
-                };
-                const inputFiles = () => new Promise((resolve) => {
-                    const input = document.createElement("input");
-                    input.type = "file";
-                    input.multiple = mode === 0 && multiple !== 0;
-                    if (mode === 1) input.setAttribute("webkitdirectory", "");
-                    if (accept) input.accept = accept;
-                    input.style.cssText = "position:fixed;left:-10000px;top:0";
-                    document.body.appendChild(input);
-                    let done = false;
-                    const finish = (files) => {
-                        if (done) return;
-                        done = true;
-                        input.remove();
-                        resolve(files);
-                    };
-                    input.addEventListener("change", () => finish(Array.from(input.files || [])), { once: true });
-                    input.addEventListener("cancel", () => finish(null), { once: true });
-                    input.click();
-                });
+                    handle = await window.showSaveFilePicker(options);
+                }
+                const id = nextId();
+                const path = `/ nfd / save - ${id} / $ {
+                    name
+                }
+                `;
+                ensureDirectory(`/ nfd / save - $ { id }`);
+                FS.writeFile(path, new Uint8Array(0));
+                if (handle) {
+                    Module.nfdSaveHandles = Module.nfdSaveHandles || {};
+                    Module.nfdSaveHandles[path] = handle;
+                }
+                writeResult([path]);
+                return 1;
+            }
+
+            if (mode == = 1 && typeof window.showDirectoryPicker == = "function") {
                 try {
-                    if (mode === 2) {
-                        let handle = null;
-                        const name = safeParts(suggestedName).pop() || "untitled";
-                        if (typeof window.showSaveFilePicker === "function") {
-                            const extensions = accept.split(",").filter(Boolean);
-                            const options = { suggestedName: name };
-                            if (extensions.length) {
-                                options.types = [{ description: "Allowed files",
-                                    accept: { "application/octet-stream": extensions } }];
-                            }
-                            handle = await window.showSaveFilePicker(options);
-                        }
-                        const id = nextId();
-                        const path = `/nfd/save-${id}/${name}`;
-                        ensureDirectory(`/nfd/save-${id}`);
-                        FS.writeFile(path, new Uint8Array(0));
-                        if (handle) {
-                            Module.nfdSaveHandles = Module.nfdSaveHandles || {};
-                            Module.nfdSaveHandles[path] = handle;
-                        }
-                        writeResult([path]);
-                        return 1;
-                    }
-
-                    if (mode === 1 && typeof window.showDirectoryPicker === "function") {
-                        try {
-                            const handle = await window.showDirectoryPicker();
-                            const id = nextId();
-                            const rootName = safeParts(handle.name)[0] || `folder-${id}`;
-                            const root = `/nfd/folder-${id}/${rootName}`;
-                            const copyDirectory = async (directory, target) => {
-                                ensureDirectory(target);
-                                for await (const [name, entry] of directory.entries()) {
-                                    const parts = safeParts(name);
-                                    if (!parts.length) continue;
-                                    const child = `${target}/${parts.join("/")}`;
-                                    if (entry.kind === "directory") {
-                                        await copyDirectory(entry, child);
-                                    } else {
-                                        await writeBrowserFile(await entry.getFile(), child);
-                                    }
-                                }
-                            };
-                            await copyDirectory(handle, root);
-                            writeResult([root]);
-                            return 1;
-                        } catch (error) {
-                            if (error && error.name === "AbortError") return 0;
-                            throw error;
-                        }
-                    }
-
-                    const files = await inputFiles();
-                    if (!files || !files.length) return 0;
+                    const handle = await window.showDirectoryPicker();
                     const id = nextId();
-                    if (mode === 1) {
-                        const relative = files[0].webkitRelativePath || files[0].name;
-                        const rootName = safeParts(relative)[0] || `folder-${id}`;
-                        const root = `/nfd/folder-${id}/${rootName}`;
-                        for (const file of files) {
-                            const parts = safeParts(file.webkitRelativePath || file.name);
-                            if (!parts.length) continue;
-                            await writeBrowserFile(file, `/nfd/folder-${id}/${parts.join("/")}`);
-                        }
-                        writeResult([root]);
-                    } else {
-                        const root = `/nfd/open-${id}`;
-                        const paths = [];
-                        for (const file of files) {
-                            const name = safeParts(file.name).pop();
-                            if (!name) continue;
-                            const path = `${root}/${name}`;
-                            await writeBrowserFile(file, path);
-                            paths.push(path);
-                        }
-                        writeResult(paths);
+                    const rootName = safeParts(handle.name)[0] || `folder - $ {
+                        id
                     }
+                    `;
+                    const root = `/ nfd / folder - ${id} / $ {
+                        rootName
+                    }
+                    `;
+                    const copyDirectory = async(directory, target) => {
+                        ensureDirectory(target);
+                                for
+                                    await(const[name, entry] of directory.entries()) {
+                                        const parts = safeParts(name);
+                                        if (!parts.length) continue;
+                                        const child = `${target} / $ {
+                                            parts.join("/")
+                                        }
+                                        `;
+                                        if (entry.kind == = "directory") {
+                                            await copyDirectory(entry, child);
+                                        } else {
+                                            await writeBrowserFile(await entry.getFile(), child);
+                                        }
+                                    }
+                    };
+                    await copyDirectory(handle, root);
+                    writeResult([root]);
                     return 1;
                 } catch (error) {
-                    if (error && error.name === "AbortError") return 0;
-                    Module.nfdLastError = error && error.message ? error.message : String(error);
-                    return -1;
+                    if (error&& error.name == = "AbortError") return 0;
+                    throw error;
                 }
-            });
+            }
+
+            const files = await inputFiles();
+            if (!files || !files.length) return 0;
+            const id = nextId();
+            if (mode == = 1) {
+                const relative = files[0].webkitRelativePath || files[0].name;
+                const rootName = safeParts(relative)[0] || `folder - $ {
+                    id
+                }
+                `;
+                const root = `/ nfd / folder - ${id} / $ {
+                    rootName
+                }
+                `;
+                for (const file of files) {
+                    const parts = safeParts(file.webkitRelativePath || file.name);
+                    if (!parts.length) continue;
+                    await writeBrowserFile(file, `/ nfd / folder - ${id} / $ { parts.join("/") }`);
+                }
+                writeResult([root]);
+            } else {
+                const root = `/ nfd / open - $ {
+                    id
+                }
+                `;
+                const paths = [];
+                for (const file of files) {
+                    const name = safeParts(file.name).pop();
+                    if (!name) continue;
+                    const path = `${root} / $ {
+                        name
+                    }
+                    `;
+                    await writeBrowserFile(file, path);
+                    paths.push(path);
+                }
+                writeResult(paths);
+            }
+            return 1;
+        } catch (error) {
+            if (error&& error.name == = "AbortError") return 0;
+            Module.nfdLastError = error && error.message ? error.message : String(error);
+            return -1;
+        }
+    });
 
 EM_JS(char*, NFDi_GetLastError, (), {
     return stringToNewUTF8(Module.nfdLastError || "The browser file dialog failed.");
@@ -361,7 +390,7 @@ EM_ASYNC_JS(int, NFDi_CommitSaveJS, (const char* pathPtr), {
             document.body.appendChild(anchor);
             anchor.click();
             anchor.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            setTimeout(() = > URL.revokeObjectURL(url), 1000);
         }
         return 1;
     } catch (error) {
