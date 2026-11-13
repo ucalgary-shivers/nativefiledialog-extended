@@ -546,6 +546,15 @@ NFD_API nfdresult_t NFD_PathSet_EnumNextU8(nfdpathsetenum_t* enumerator, nfdu8ch
 /** Free the pathSet */
 NFD_API void NFD_PathSet_Free(const nfdpathset_t* pathSet);
 
+#ifdef __EMSCRIPTEN__
+/** Write a file created by NFD_SaveDialog() to the browser's download destination.
+ *
+ *  Save dialogs return a path in Emscripten's virtual filesystem. Call this after writing the
+ *  desired contents to that path. Browsers with the File System Access API save to the selected
+ *  file; other browsers download the file. */
+NFD_API nfdresult_t NFD_Emscripten_CommitSave(const nfdu8char_t* path);
+#endif
+
 #ifdef _WIN32
 
 /* say that the U8 versions of functions are not just __attribute__((alias(""))) to the native
