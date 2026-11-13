@@ -150,6 +150,26 @@ Add `-DNFD_BUILD_TESTS=OFF` to disable building sample programs and `-DNFD_INSTA
 
 On Linux, if you want to use the Flatpak desktop portal instead of GTK, add `-DNFD_PORTAL=ON`.  (Otherwise, GTK will be used.)  See the "Usage" section below for more information.
 
+### Emscripten
+
+The Emscripten backend uses the browser's file picker and copies selected files into the
+Emscripten virtual filesystem (MEMFS). Returned paths are virtual paths, not paths on the user's
+computer. Build with Asyncify (the default) or JSPI; `-DNFD_EMSCRIPTEN_ASYNC=OFF` disables
+dialogs and makes them return an explanatory error.
+
+The synchronous NFD API suspends while the browser picker is open, so call dialog functions from
+a browser user-gesture handler, such as a button click. This is required by browser security
+policies. Open-file selection works through `<input type="file">`; folder selection uses the
+File System Access API when available and otherwise uses the browser's directory input. Multiple
+folder selection is limited by the browser picker and currently returns the one folder selected.
+
+Save dialogs return an empty file in MEMFS. Write the desired contents to that path, then call
+`NFD_Emscripten_CommitSave(path)` to write through the File System Access API or trigger a browser
+download. Call the commit function from a user-gesture handler as well, so browsers do not block
+the download. `defaultPath`, dialog titles, parent windows, and custom labels are not available in
+browser pickers. Selected file contents remain in MEMFS until the application removes them or
+the runtime exits.
+
 See the [CI build file](.github/workflows/cmake.yml) for some example build commands.
 
 ### Visual Studio on Windows
