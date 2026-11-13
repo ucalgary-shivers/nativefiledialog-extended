@@ -224,7 +224,7 @@ EM_ASYNC_JS(int, NFDi_PickJS,
                 const ensureDirectory = (path) => {
                     if (!FS.analyzePath(path).exists) FS.mkdirTree(path);
                 };
-                const safeParts = (name) => name.replace(/\\/g, "/").split("/")
+                const safeParts = (name) => name.replace(/\\\\\\\\/g, "/").split("/")
                     .filter((part) => part && part !== "." && part !== "..");
                 const writeBrowserFile = async (file, path) => {
                     const slash = path.lastIndexOf("/");
